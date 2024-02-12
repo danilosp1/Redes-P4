@@ -43,22 +43,66 @@ class Enlace:
     def __init__(self, linha_serial):
         self.linha_serial = linha_serial
         self.linha_serial.registrar_recebedor(self.__raw_recv)
+        self.buffer_recebimento = bytearray()
+        self.escapando = False
 
     def registrar_recebedor(self, callback):
         self.callback = callback
 
     def enviar(self, datagrama):
-        # TODO: Preencha aqui com o código para enviar o datagrama pela linha
-        # serial, fazendo corretamente a delimitação de quadros e o escape de
-        # sequências especiais, de acordo com o protocolo CamadaEnlace (RFC 1055).
-        pass
+        # Bytes especiais e suas sequências de escape
+        DELIMITADOR = 0xC0
+        ESCAPE = 0xDB
+        DELIMITADOR_ESCAPADO = b'\xDB\xDC'
+        ESCAPE_ESCAPADO = b'\xDB\xDD'
+
+        # Inicia com o delimitador
+        quadro = bytes([DELIMITADOR])
+
+        for byte in datagrama:
+            if byte == DELIMITADOR:
+                # Substitui o delimitador por sua sequência de escape
+                quadro += DELIMITADOR_ESCAPADO
+            elif byte == ESCAPE:
+                # Substitui o byte de escape por sua sequência de escape
+                quadro += ESCAPE_ESCAPADO
+            else:
+                # Adiciona o byte ao quadro sem modificação
+                quadro += bytes([byte])
+
+        # Finaliza com o delimitador
+        quadro += bytes([DELIMITADOR])
+
+        # Envia o quadro pela linha serial
+        self.linha_serial.enviar(quadro)
 
     def __raw_recv(self, dados):
-        # TODO: Preencha aqui com o código para receber dados da linha serial.
-        # Trate corretamente as sequências de escape. Quando ler um quadro
-        # completo, repasse o datagrama contido nesse quadro para a camada
-        # superior chamando self.callback. Cuidado pois o argumento dados pode
-        # vir quebrado de várias formas diferentes - por exemplo, podem vir
-        # apenas pedaços de um quadro, ou um pedaço de quadro seguido de um
-        # pedaço de outro, ou vários quadros de uma vez só.
-        pass
+        # Constantes para os bytes especiais
+        DELIMITADOR = 0xC0
+        ESCAPE = 0xDB
+        ESCAPE_PARA_C0 = 0xDC
+        ESCAPE_PARA_DB = 0xDD
+
+        for byte in dados:
+            if self.escapando:
+                if byte == ESCAPE_PARA_C0:
+                    self.buffer_recebimento.append(DELIMITADOR)
+                elif byte == ESCAPE_PARA_DB:
+                    self.buffer_recebimento.append(ESCAPE)
+                self.escapando = False
+            elif byte == ESCAPE:
+                self.escapando = True
+            elif byte == DELIMITADOR:
+                if len(self.buffer_recebimento) > 0:
+                    try:
+                        # Tenta chamar o callback com o datagrama completo
+                        self.callback(bytes(self.buffer_recebimento))
+                    except Exception:
+                        # Ignora a exceção, mas mostra na tela
+                        import traceback
+                        traceback.print_exc()
+                    finally:
+                        # Limpa o buffer independentemente de sucesso ou falha
+                        self.buffer_recebimento.clear()
+            else:
+                self.buffer_recebimento.append(byte)
